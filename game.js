@@ -23,6 +23,11 @@ class Hotel {
         this.budget = 10000;
         this.reputation = 5;
     }
+
+    cleanRoom(room) {
+        room.status = 'clean';
+        room.guest = null;
+    }
 }
 
 class Room {
@@ -64,4 +69,32 @@ function create ()
 function update ()
 {
     // Update game logic here
+
+    // Guest arrival
+    if (Math.random() < 0.2) { // Adjust probability as needed
+        let guest = new Guest('Guest ' + (guestCount++), Date.now(), Date.now() + 3600000, ['cleanliness']); // 1 hour stay
+        this.hotel.guests.push(guest);
+    }
+
+    // Room assignment
+    this.hotel.guests.forEach(guest => {
+        if (!guest.room) {
+            let availableRoom = this.hotel.rooms.find(room => room.status === 'clean');
+            if (availableRoom) {
+                availableRoom.status = 'occupied';
+                availableRoom.guest = guest;
+                guest.room = availableRoom;
+            }
+        }
+    });
+
+    // Room cleaning
+    this.hotel.staff.forEach(staff => {
+        if (staff.role === 'housekeeping') {
+            let dirtyRoom = this.hotel.rooms.find(room => room.status === 'dirty');
+            if (dirtyRoom) {
+                this.hotel.cleanRoom(dirtyRoom);
+            }
+        }
+    });
 }
