@@ -1,3 +1,5 @@
+#include objects.js;
+
 // game.js
 var config = {
     type: Phaser.AUTO,
