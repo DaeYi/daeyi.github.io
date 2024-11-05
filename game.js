@@ -56,21 +56,20 @@ class Staff {
     }
 }
 
-function preload ()
-{
-    // Load assets here, e.g., images, sounds
-}
+// Game scenes
+var MainScene = new Phaser.Scene('MainScene');
 
-function create ()
-{
-    // Create game objects here, e.g., sprites, text
-}
+MainScene.preload = function () {
+    // Load assets
+};
 
-function update ()
-{
-    // Update game logic here
+MainScene.create = function () {
+    // Create game objects and initialize the game
+};
 
-    // Guest arrival
+MainScene.update = function () {
+    // Update game logic
+     // Guest arrival
     if (Math.random() < 0.2) { // Adjust probability as needed
         let guest = new Guest('Guest ' + (guestCount++), Date.now(), Date.now() + 3600000, ['cleanliness']); // 1 hour stay
         this.hotel.guests.push(guest);
@@ -97,4 +96,27 @@ function update ()
             }
         }
     });
+};
+
+// Add the scene to the game
+game.scene.add('MainScene', MainScene);
+game.scene.start('MainScene');
+
+function preload ()
+{
+    // Load assets here, e.g., images, sounds
 }
+
+function create ()
+{
+    // Create game objects here, e.g., sprites, text
+}
+
+function update ()
+{
+    // Update game logic here
+
+   
+}
+
+
