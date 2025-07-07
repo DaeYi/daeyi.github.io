@@ -35,8 +35,8 @@ const game = new Phaser.Game(config);
 
 function preload() {
     // We are now loading image assets! These are hosted by Phaser for examples.
-    this.load.image('door_img', 'https://labs.phaser.io/assets/sprites/door.png');
-    this.load.image('bed_img', 'https://labs.phaser.io/assets/sprites/bed.png');
+    this.load.image('door_img', 'https://daeyi.github.io/assets/sprites/door.png');
+    this.load.image('bed_img', 'https://daeyi.github.io/assets/sprites/bed.png');
 }
 
 function create() {
