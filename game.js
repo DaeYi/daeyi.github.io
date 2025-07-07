@@ -39,9 +39,10 @@ let cursorPreview;
 const game = new Phaser.Game(config);
 
 function preload() {
-    this.load.image('door_img', 'https://labs.phaser.io/assets/sprites/door.png');
-    this.load.image('bed_img', 'https://labs.phaser.io/assets/sprites/bed.png');
-    this.load.spritesheet('character_img', 'https://labs.phaser.io/assets/sprites/dude.png', { frameWidth: 32, frameHeight: 48 });
+    // --- UPDATED to use local asset paths ---
+    this.load.image('door_img', 'assets/door.png');
+    this.load.image('bed_img', 'assets/bed.png');
+    this.load.spritesheet('character_img', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
 }
 
 function create() {
