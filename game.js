@@ -6,11 +6,10 @@ const config = {
     width: 800,
     height: 600,
     backgroundColor: '#1b1464',
-    // --- 1. ENABLE PHYSICS ---
     physics: {
         default: 'arcade',
         arcade: {
-            debug: false
+            debug: false // Set to true to see physics boxes
         }
     },
     scene: {
@@ -32,9 +31,10 @@ let buildMode = null;
 let easystar;
 let rooms = [];
 
-// --- Game Objects ---
-let roomGraphics, furnitureGroup, characterGroup;
-let moneyText, buildStatusText;
+// Game Objects
+let roomGraphics, selectorGraphics, furnitureGroup, characterGroup;
+let moneyText, buildStatusText, floorText;
+let cursorPreview;
 
 const game = new Phaser.Game(config);
 
@@ -53,25 +53,30 @@ function create() {
     
     // --- Pathfinding Init ---
     easystar = new EasyStar.js();
-    setupPathfinding();
-
+    
     // --- Graphics & Groups ---
     this.graphics = this.add.graphics({ lineStyle: { width: 1, color: 0x444444 } });
     roomGraphics = this.add.graphics();
+    selectorGraphics = this.add.graphics();
     furnitureGroup = this.add.group();
-    characterGroup = this.physics.add.group(); // Use a physics group
+    characterGroup = this.physics.add.group();
+    
+    // --- Initial Draw ---
     drawGrid(this.graphics);
-    findRooms(); // Initial room find
+    findRooms(); // Includes initial drawFloor() and setupPathfinding()
 
-    // --- Camera & Input ---
-    setupCameraAndInput(this);
+    // --- Cursor Preview ---
+    cursorPreview = this.add.image(0, 0, '').setAlpha(0.5).setVisible(false).setDepth(100);
 
     // --- UI ---
     setupUI(this);
 
+    // --- Camera & Input ---
+    setupCameraAndInput(this);
+
     // --- Guest Spawner ---
     this.time.addEvent({
-        delay: 5000, // Check every 5 seconds
+        delay: 5000,
         callback: spawnGuest,
         callbackScope: this,
         loop: true
@@ -79,12 +84,15 @@ function create() {
 }
 
 function update(time, delta) {
+    if (easystar) {
+        easystar.calculate();
+    }
     characterGroup.getChildren().forEach(character => character.update(time, delta));
-    easystar.calculate();
+    updateCursorPreview(this);
 }
 
 // =================================================================
-//  GAME LOGIC & CLASSES
+//  CHARACTER CLASSES
 // =================================================================
 
 class Character extends Phaser.GameObjects.Sprite {
@@ -92,12 +100,12 @@ class Character extends Phaser.GameObjects.Sprite {
         super(scene, x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2, texture);
         this.path = [];
         this.speed = 100;
-        // --- 2. ADD TO PHYSICS ---
-        scene.physics.add.existing(this); // This gives the sprite a 'body'
+        scene.physics.add.existing(this);
         characterGroup.add(this);
     }
 
     moveTo(targetTile) {
+        if (!easystar) return;
         easystar.findPath(
             Math.floor(this.x / TILE_SIZE), Math.floor(this.y / TILE_SIZE),
             targetTile.x, targetTile.y,
@@ -109,13 +117,13 @@ class Character extends Phaser.GameObjects.Sprite {
         );
     }
 
-    update(time, delta) {
-        if (this.path.length > 0) {
+    update() {
+        if (this.path && this.path.length > 0) {
             const targetNode = this.path[0];
             const targetX = targetNode.x * TILE_SIZE + TILE_SIZE / 2;
             const targetY = targetNode.y * TILE_SIZE + TILE_SIZE / 2;
-
             const distance = Phaser.Math.Distance.Between(this.x, this.y, targetX, targetY);
+
             if (distance < 4) {
                 this.path.shift();
                 if(this.path.length === 0) {
@@ -126,7 +134,9 @@ class Character extends Phaser.GameObjects.Sprite {
                 this.scene.physics.velocityFromRotation(angle, this.speed, this.body.velocity);
             }
         } else {
-            this.body.reset(this.x, this.y);
+            if (this.body) {
+                this.body.reset(this.x, this.y);
+            }
         }
     }
 }
@@ -134,15 +144,19 @@ class Character extends Phaser.GameObjects.Sprite {
 class Guest extends Character {
     constructor(scene, x, y, texture) {
         super(scene, x, y, texture);
-        // Example of giving the guest a destination
-        this.moveTo({x: 10, y: 10});
+        this.moveTo({x: 10, y: 10}); // Give a default destination
     }
 }
 
+// =================================================================
+//  CORE LOGIC
+// =================================================================
+
 function spawnGuest() {
+    // FIX: Using 'this' which is the correct scene context
     const availableRoom = rooms[currentFloor].find(r => r.status === 'available');
     if (availableRoom) {
-        new Guest(game.scene.scenes[0], 0, 5, 'character_img');
+        new Guest(this, 0, 5, 'character_img');
     }
 }
 
@@ -153,40 +167,27 @@ function findRooms() {
     for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
         for (let x = 0; x < MAP_WIDTH_TILES; x++) {
             if (hotelData[currentFloor][y][x] && hotelData[currentFloor][y][x].type === 'standard_room' && !visited[y][x]) {
-                let roomTiles = [];
-                let toVisit = [{x, y}];
+                let roomTiles = [], toVisit = [{x, y}], hasBed = false, hasDoor = false;
                 visited[y][x] = true;
                 
-                let hasBed = false;
-                let hasDoor = false;
-
                 while(toVisit.length > 0) {
                     let current = toVisit.pop();
                     roomTiles.push(current);
                     
-                    const tileData = hotelData[currentFloor][current.y][current.x];
-                    if(tileData && tileData.furniture) {
-                        tileData.furniture.forEach(item => {
-                            if(item.type === 'bed') hasBed = true;
-                            if(item.type === 'door') hasDoor = true;
-                        });
-                    }
+                    hotelData[currentFloor][current.y][current.x].furniture.forEach(item => {
+                        if(item.type === 'bed') hasBed = true;
+                        if(item.type === 'door') hasDoor = true;
+                    });
 
                     [[0,-1], [0,1], [-1,0], [1,0]].forEach(dir => {
-                        let nx = current.x + dir[0];
-                        let ny = current.y + dir[1];
+                        let nx = current.x + dir[0], ny = current.y + dir[1];
                         if(hotelData[currentFloor][ny]?.[nx]?.type === 'standard_room' && !visited[ny][nx]) {
                             visited[ny][nx] = true;
                             toVisit.push({x: nx, y: ny});
                         }
                     });
                 }
-                
-                let status = 'incomplete';
-                if(hasBed && hasDoor) {
-                    status = 'available';
-                }
-                rooms[currentFloor].push({ tiles: roomTiles, status: status, hasBed, hasDoor });
+                rooms[currentFloor].push({ tiles: roomTiles, status: (hasBed && hasDoor) ? 'available' : 'incomplete' });
             }
         }
     }
@@ -195,78 +196,64 @@ function findRooms() {
 }
 
 function setupPathfinding() {
-    let grid = [];
-    for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
-        let row = [];
-        for (let x = 0; x < MAP_WIDTH_TILES; x++) {
-            row.push(hotelData[currentFloor][y][x] ? 1 : 0);
-        }
-        grid.push(row);
-    }
+    if (!easystar) return;
+    let grid = hotelData[currentFloor].map(row => row.map(tile => (tile ? 1 : 0)));
     easystar.setGrid(grid);
     easystar.setAcceptableTiles([0]);
 }
 
-function drawFloor() {
-    roomGraphics.clear();
-    furnitureGroup.clear(true, true);
+// =================================================================
+//  INPUT HANDLING
+// =================================================================
 
-    const statusColors = {
-        incomplete: 0xff0000,
-        available: 0x00ff00,
-        occupied: 0x0000ff,
-        dirty: 0x8B4513
-    };
+function setupCameraAndInput(scene) {
+    scene.cameras.main.setBounds(0, 0, MAP_WIDTH_TILES * TILE_SIZE, MAP_HEIGHT_TILES * TILE_SIZE);
+    let selectionStartTile = null;
 
-    rooms[currentFloor].forEach(room => {
-        roomGraphics.fillStyle(statusColors[room.status] || 0xff0000, 0.5);
-        room.tiles.forEach(tilePos => {
-            roomGraphics.fillRect(tilePos.x * TILE_SIZE, tilePos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        });
-    });
+    scene.input.on('pointerdown', (pointer) => {
+        const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const tileX = Math.floor(worldPoint.x / TILE_SIZE);
+        const tileY = Math.floor(worldPoint.y / TILE_SIZE);
 
-    for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
-        for (let x = 0; x < MAP_WIDTH_TILES; x++) {
-            const tile = hotelData[currentFloor][y][x];
-            if (tile && tile.furniture) {
-                tile.furniture.forEach(item => {
-                    furnitureGroup.create(item.x * TILE_SIZE + TILE_SIZE/2, item.y * TILE_SIZE + TILE_SIZE/2, item.type + '_img');
-                });
-            }
+        if (buildMode === 'standard_room') {
+            selectionStartTile = { x: tileX, y: tileY };
+        } else if (buildMode && buildMode.startsWith('place_')) {
+            placeFurniture(tileX, tileY);
         }
-    }
-}
+    });
+    
+    scene.input.on('pointermove', (pointer) => {
+        if (!pointer.isDown) return;
+        if (buildMode === 'standard_room' && selectionStartTile) {
+            const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+            drawSelectionBox(selectionStartTile, { x: Math.floor(worldPoint.x / TILE_SIZE), y: Math.floor(worldPoint.y / TILE_SIZE) });
+        } else if (!buildMode) {
+            scene.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / scene.cameras.main.zoom;
+            scene.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / scene.cameras.main.zoom;
+        }
+    });
 
-function setupUI(scene) {
-    moneyText = scene.add.text(10, 10, `Money: $${money}`, { fontSize: '20px', fill: '#ffff00' }).setScrollFactor(0);
-    buildStatusText = scene.add.text(10, 40, 'Mode: Pan & View', { fontSize: '16px', fill: '#ffffff' }).setScrollFactor(0);
-    scene.floorText = scene.add.text(10, 70, `Floor: ${currentFloor + 1}`, { fontSize: '20px', fill: '#ffffff' }).setScrollFactor(0);
-    const floorUp = scene.add.text(120, 70, '▲', { fontSize: '20px', fill: '#00ff00', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4);
-    const floorDown = scene.add.text(150, 70, '▼', { fontSize: '20px', fill: '#ff0000', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4);
-    floorUp.on('pointerdown', () => { if (currentFloor < NUM_FLOORS - 1) { currentFloor++; scene.floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
-    floorDown.on('pointerdown', () => { if (currentFloor > 0) { currentFloor--; scene.floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
-    let yPos = 110;
-    createBuildButton(scene, yPos, 'Pan & View', null);
-    createBuildButton(scene, yPos += 35, 'Build Room', 'standard_room');
-    createBuildButton(scene, yPos += 35, 'Place Door', 'place_door');
-    createBuildButton(scene, yPos += 35, 'Place Bed', 'place_bed');
-}
-
-function createBuildButton(scene, y, text, mode) {
-    const button = scene.add.text(10, y, text, { fontSize: '18px', fill: '#ffffff', backgroundColor: '#555555', padding: { x: 5, y: 5 } })
-        .setScrollFactor(0).setInteractive();
-    button.on('pointerdown', () => {
-        buildMode = mode;
-        updateBuildStatusText();
+    scene.input.on('pointerup', (pointer) => {
+        if (buildMode === 'standard_room' && selectionStartTile) {
+            const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+            zoneRoom(selectionStartTile, { x: Math.floor(worldPoint.x / TILE_SIZE), y: Math.floor(worldPoint.y / TILE_SIZE) });
+            selectionStartTile = null;
+            selectorGraphics.clear();
+        }
     });
 }
+
+// =================================================================
+//  BUILDING & ZONING
+// =================================================================
 
 function zoneRoom(start, end) {
-    const roomCost = (Math.abs(start.x - end.x) + 1) * (Math.abs(start.y - end.y) + 1) * 100;
-    if (money < roomCost) return;
-    money -= roomCost; moneyText.setText(`Money: $${money}`);
     const startX = Math.min(start.x, end.x), startY = Math.min(start.y, end.y);
     const endX = Math.max(start.x, end.x), endY = Math.max(start.y, end.y);
+    const roomCost = (endX - startX + 1) * (endY - startY + 1) * 100;
+    if (money < roomCost) return;
+    
+    money -= roomCost; updateMoneyText();
     for (let y = startY; y <= endY; y++) {
         for (let x = startX; x <= endX; x++) {
             if (hotelData[currentFloor][y]?.[x] === null) {
@@ -282,10 +269,75 @@ function placeFurniture(tileX, tileY) {
     if (!tile) return;
     const cost = (buildMode === 'place_door') ? 150 : 400;
     if (money < cost) return;
-    money -= cost; moneyText.setText(`Money: $${money}`);
+
+    money -= cost; updateMoneyText();
     const furnitureType = buildMode.split('_')[1];
     tile.furniture.push({ type: furnitureType, x: tileX, y: tileY });
     findRooms();
+}
+
+// =================================================================
+//  UI & DRAWING
+// =================================================================
+
+function setupUI(scene) {
+    moneyText = scene.add.text(10, 10, `Money: $${money}`, { fontSize: '20px', fill: '#ffff00' }).setScrollFactor(0).setDepth(100);
+    buildStatusText = scene.add.text(10, 40, 'Mode: Pan & View', { fontSize: '16px', fill: '#ffffff' }).setScrollFactor(0).setDepth(100);
+    floorText = scene.add.text(10, 70, `Floor: ${currentFloor + 1}`, { fontSize: '20px', fill: '#ffffff' }).setScrollFactor(0).setDepth(100);
+
+    const floorUp = scene.add.text(120, 70, '▲', { fontSize: '20px', fill: '#00ff00', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4).setDepth(100);
+    const floorDown = scene.add.text(150, 70, '▼', { fontSize: '20px', fill: '#ff0000', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4).setDepth(100);
+
+    floorUp.on('pointerdown', () => { if (currentFloor < NUM_FLOORS - 1) { currentFloor++; floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
+    floorDown.on('pointerdown', () => { if (currentFloor > 0) { currentFloor--; floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
+
+    let yPos = 110;
+    createBuildButton(scene, yPos, 'Pan & View', null);
+    createBuildButton(scene, yPos += 35, 'Build Room', 'standard_room');
+    createBuildButton(scene, yPos += 35, 'Place Door', 'place_door');
+    createBuildButton(scene, yPos += 35, 'Place Bed', 'place_bed');
+}
+
+function createBuildButton(scene, y, text, mode) {
+    const button = scene.add.text(10, y, text, { fontSize: '18px', fill: '#ffffff', backgroundColor: '#555555', padding: { x: 5, y: 5 } })
+        .setScrollFactor(0).setInteractive().setDepth(100);
+    button.on('pointerdown', () => {
+        buildMode = mode;
+        updateBuildStatusText();
+        if (buildMode && buildMode.startsWith('place_')) {
+            cursorPreview.setTexture(buildMode.split('_')[1] + '_img');
+        }
+    });
+}
+
+function updateCursorPreview(scene) {
+    if (buildMode && buildMode.startsWith('place_')) {
+        const worldPoint = scene.cameras.main.getWorldPoint(scene.input.x, scene.input.y);
+        cursorPreview.setPosition(Math.floor(worldPoint.x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2, Math.floor(worldPoint.y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2);
+        cursorPreview.setVisible(true);
+    } else {
+        cursorPreview.setVisible(false);
+    }
+}
+
+function drawFloor() {
+    roomGraphics.clear();
+    furnitureGroup.clear(true, true);
+    const statusColors = { incomplete: 0xff0000, available: 0x00ff00, occupied: 0x0000ff, dirty: 0x8B4513 };
+
+    rooms[currentFloor].forEach(room => {
+        roomGraphics.fillStyle(statusColors[room.status] || 0xff0000, 0.5);
+        room.tiles.forEach(tilePos => roomGraphics.fillRect(tilePos.x * TILE_SIZE, tilePos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE));
+    });
+
+    for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
+        for (let x = 0; x < MAP_WIDTH_TILES; x++) {
+            const tile = hotelData[currentFloor][y][x];
+            if (tile?.furniture) {
+                tile.furniture.forEach(item => furnitureGroup.create(item.x * TILE_SIZE + TILE_SIZE/2, item.y * TILE_SIZE + TILE_SIZE/2, item.type + '_img'));
+            }
+        }
+    }
 }
 
 function drawGrid(graphics) {
@@ -294,18 +346,15 @@ function drawGrid(graphics) {
     for (let j = 0; j < MAP_HEIGHT_TILES + 1; j++) graphics.lineBetween(0, j * TILE_SIZE, MAP_WIDTH_TILES * TILE_SIZE, j * TILE_SIZE);
 }
 
-function updateBuildStatusText() { buildStatusText.setText(`Mode: ${buildMode || 'Pan & View'}`); }
-// NOTE: I removed the selection box and cursor preview for simplification to ensure the main loop works.
-// They can be added back carefully. This version focuses on stability.
-function setupCameraAndInput(scene) {
-    scene.cameras.main.setBounds(0, 0, MAP_WIDTH_TILES * TILE_SIZE, MAP_HEIGHT_TILES * TILE_SIZE);
-    scene.input.on('pointerdown', (pointer) => {
-        const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        const tileX = Math.floor(worldPoint.x / TILE_SIZE);
-        const tileY = Math.floor(worldPoint.y / TILE_SIZE);
-
-        if (buildMode && buildMode.startsWith('place_')) {
-            placeFurniture(tileX, tileY);
-        }
-    });
+function drawSelectionBox(start, end) {
+    selectorGraphics.clear();
+    selectorGraphics.fillStyle(0x00ff00, 0.25);
+    const x = Math.min(start.x, end.x) * TILE_SIZE;
+    const y = Math.min(start.y, end.y) * TILE_SIZE;
+    const w = (Math.abs(start.x - end.x) + 1) * TILE_SIZE;
+    const h = (Math.abs(start.y - end.y) + 1) * TILE_SIZE;
+    selectorGraphics.fillRect(x, y, w, h);
 }
+
+function updateMoneyText() { moneyText.setText(`Money: $${money}`); }
+function updateBuildStatusText() { buildStatusText.setText(`Mode: ${buildMode || 'Pan & View'}`); }
