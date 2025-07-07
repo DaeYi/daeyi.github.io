@@ -13,135 +13,211 @@ const config = {
 // --- Game Variables ---
 let currentFloor = 0;
 let hotelData = [];
-let buildMode = null; // What are we currently building? (e.g., 'standard_room')
-let money = 50000; // Player's starting money
+let buildMode = null;
+let money = 50000;
 
 const NUM_FLOORS = 5;
 const TILE_SIZE = 32;
 const MAP_WIDTH_TILES = 50;
 const MAP_HEIGHT_TILES = 50;
 
+// --- Costs ---
+const ROOM_COST_PER_TILE = 100;
+const DOOR_COST = 150;
+const BED_COST = 400;
+
 // --- Game Objects ---
-let roomGraphics; // A separate graphics object for drawing the rooms
-let selectorGraphics; // A graphics object for the drag-selector
-let moneyText;
+let roomGraphics, selectorGraphics, furnitureGroup;
+let moneyText, buildStatusText;
+let cursorPreview;
 
 const game = new Phaser.Game(config);
 
-function preload() {}
+function preload() {
+    // We are now loading image assets! These are hosted by Phaser for examples.
+    this.load.image('door_img', 'https://labs.phaser.io/assets/sprites/door.png');
+    this.load.image('bed_img', 'https://labs.phaser.io/assets/sprites/bed.png');
+}
 
 function create() {
-    // --- Initialize Data & Graphics ---
+    // --- Data Model v2 ---
+    // Each tile is now an object, not just a number. This is much more flexible.
     for (let f = 0; f < NUM_FLOORS; f++) {
-        hotelData.push(Array(MAP_HEIGHT_TILES).fill(0).map(() => Array(MAP_WIDTH_TILES).fill(0)));
+        hotelData.push(Array(MAP_HEIGHT_TILES).fill(null).map(() => Array(MAP_WIDTH_TILES).fill(null)));
     }
+
+    // --- Graphics & Groups ---
     this.graphics = this.add.graphics({ lineStyle: { width: 1, color: 0x444444 } });
     roomGraphics = this.add.graphics();
     selectorGraphics = this.add.graphics();
+    furnitureGroup = this.add.group(); // A group to hold all our furniture sprites
     drawGrid(this.graphics);
-    drawRooms();
+    drawFloor();
 
-    // --- Camera Controls ---
-    this.cameras.main.setBounds(0, 0, MAP_WIDTH_TILES * TILE_SIZE, MAP_HEIGHT_TILES * TILE_SIZE);
-    let dragStart = null;
-    this.input.on('pointermove', (pointer) => {
-        if (!pointer.isDown) {
-            dragStart = null;
-            return;
-        }
-        if (!dragStart) {
-            dragStart = { x: pointer.x, y: pointer.y };
-        }
-        if (buildMode) {
-             // Handle drawing the build selector in update()
-        } else {
-            this.cameras.main.scrollX -= (pointer.x - dragStart.x) / this.cameras.main.zoom;
-            this.cameras.main.scrollY -= (pointer.y - dragStart.y) / this.cameras.main.zoom;
-        }
-    });
+    // --- Cursor Preview ---
+    cursorPreview = this.add.image(0, 0, '').setAlpha(0.5).setVisible(false);
 
-    // --- Zoning/Building Logic ---
-    let selectionStartTile = null;
-    this.input.on('pointerdown', (pointer) => {
-        if (!buildMode) return;
-        const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        selectionStartTile = { x: Math.floor(worldPoint.x / TILE_SIZE), y: Math.floor(worldPoint.y / TILE_SIZE) };
-    });
-
-    this.input.on('pointerup', (pointer) => {
-        if (!buildMode || !selectionStartTile) return;
-
-        const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        const selectionEndTile = { x: Math.floor(worldPoint.x / TILE_SIZE), y: Math.floor(worldPoint.y / TILE_SIZE) };
-        
-        const startX = Math.min(selectionStartTile.x, selectionEndTile.x);
-        const startY = Math.min(selectionStartTile.y, selectionEndTile.y);
-        const endX = Math.max(selectionStartTile.x, selectionEndTile.x);
-        const endY = Math.max(selectionStartTile.y, selectionEndTile.y);
-        
-        const roomCost = (endX - startX + 1) * (endY - startY + 1) * 100; // $100 per tile
-        if (money >= roomCost) {
-            money -= roomCost;
-            updateMoneyText();
-            for (let y = startY; y <= endY; y++) {
-                for (let x = startX; x <= endX; x++) {
-                    hotelData[currentFloor][y][x] = 1; // 1 represents a Standard Room
-                }
-            }
-            drawRooms();
-        } else {
-            console.log("Not enough money!");
-        }
-
-        selectionStartTile = null;
-        selectorGraphics.clear();
-    });
-
+    // --- Camera & Input ---
+    setupCameraAndInput(this);
 
     // --- UI ---
-    this.floorText = this.add.text(10, 10, `Floor: ${currentFloor + 1}`, { fontSize: '24px', fill: '#ffffff' }).setScrollFactor(0);
-    moneyText = this.add.text(10, 40, `Money: $${money}`, { fontSize: '24px', fill: '#ffff00' }).setScrollFactor(0);
+    setupUI(this);
+}
+
+function update() {
+    // --- Update Cursor Preview ---
+    if (buildMode && buildMode.startsWith('place_')) {
+        const pointer = this.input.activePointer;
+        const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const tileX = Math.floor(worldPoint.x / TILE_SIZE);
+        const tileY = Math.floor(worldPoint.y / TILE_SIZE);
+        
+        cursorPreview.setPosition(tileX * TILE_SIZE + TILE_SIZE / 2, tileY * TILE_SIZE + TILE_SIZE / 2);
+        cursorPreview.setVisible(true);
+    } else {
+        cursorPreview.setVisible(false);
+    }
+
+    // --- Live Drawing of Selection Rectangle (for zoning) ---
+    if (buildMode === 'standard_room' && this.input.activePointer.isDown) {
+        // This logic is now handled in setupCameraAndInput to avoid complexity here.
+    }
+}
+
+// --- Helper Functions ---
+
+function setupCameraAndInput(scene) {
+    scene.cameras.main.setBounds(0, 0, MAP_WIDTH_TILES * TILE_SIZE, MAP_HEIGHT_TILES * TILE_SIZE);
+    let dragStart = null;
+    let selectionStartTile = null;
+
+    scene.input.on('pointerdown', (pointer) => {
+        const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const tileX = Math.floor(worldPoint.x / TILE_SIZE);
+        const tileY = Math.floor(worldPoint.y / TILE_SIZE);
+
+        if (buildMode === 'standard_room') {
+            selectionStartTile = { x: tileX, y: tileY };
+        } else if (buildMode === 'place_door' || buildMode === 'place_bed') {
+            placeFurniture(tileX, tileY);
+        }
+    });
     
-    const floorUp = this.add.text(150, 10, '▲', { fontSize: '24px', fill: '#00ff00' }).setScrollFactor(0).setInteractive();
-    const floorDown = this.add.text(200, 10, '▼', { fontSize: '24px', fill: '#ff0000' }).setScrollFactor(0).setInteractive();
-
-    floorUp.on('pointerdown', () => {
-        if (currentFloor < NUM_FLOORS - 1) {
-            currentFloor++;
-            this.floorText.setText(`Floor: ${currentFloor + 1}`);
-            drawRooms();
-        }
-    });
-    floorDown.on('pointerdown', () => {
-        if (currentFloor > 0) {
-            currentFloor--;
-            this.floorText.setText(`Floor: ${currentFloor + 1}`);
-            drawRooms();
+    scene.input.on('pointermove', (pointer) => {
+        if (!pointer.isDown) return;
+        if (buildMode === 'standard_room' && selectionStartTile) {
+            const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+            drawSelectionBox(selectionStartTile.x, selectionStartTile.y, Math.floor(worldPoint.x / TILE_SIZE), Math.floor(worldPoint.y / TILE_SIZE));
+        } else if (!buildMode) {
+             // Simple pan
+            scene.cameras.main.scrollX -= (pointer.x - pointer.prevPosition.x) / scene.cameras.main.zoom;
+            scene.cameras.main.scrollY -= (pointer.y - pointer.prevPosition.y) / scene.cameras.main.zoom;
         }
     });
 
-    // Build Button
-    const buildButton = this.add.text(10, 70, 'Build Standard Room', { fontSize: '18px', fill: '#ffffff', backgroundColor: '#555555', padding: {x: 5, y: 5} }).setScrollFactor(0).setInteractive();
-    buildButton.on('pointerdown', () => {
-        buildMode = (buildMode === 'standard_room') ? null : 'standard_room';
-        buildButton.setBackgroundColor(buildMode ? '#00ff00' : '#555555');
+    scene.input.on('pointerup', (pointer) => {
+        if (buildMode === 'standard_room' && selectionStartTile) {
+            const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+            const endTile = { x: Math.floor(worldPoint.x / TILE_SIZE), y: Math.floor(worldPoint.y / TILE_SIZE) };
+            zoneRoom(selectionStartTile, endTile);
+            selectionStartTile = null;
+            selectorGraphics.clear();
+        }
     });
 }
 
-function update(time, delta) {
-    // --- Live Drawing of Selection Rectangle ---
-    if (buildMode && this.input.activePointer.isDown && this.input.activePointer.getDuration() > 100) {
-        const startPoint = this.cameras.main.getWorldPoint(this.input.activePointer.downX, this.input.activePointer.downY);
-        const endPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
-        
-        const x = Math.min(startPoint.x, endPoint.x);
-        const y = Math.min(startPoint.y, endPoint.y);
-        const width = Math.abs(startPoint.x - endPoint.x);
-        const height = Math.abs(startPoint.y - endPoint.y);
+function setupUI(scene) {
+    // --- Text Displays ---
+    moneyText = scene.add.text(10, 10, `Money: $${money}`, { fontSize: '20px', fill: '#ffff00' }).setScrollFactor(0);
+    buildStatusText = scene.add.text(10, 40, 'Mode: Pan & View', { fontSize: '16px', fill: '#ffffff' }).setScrollFactor(0);
+    scene.floorText = scene.add.text(10, 70, `Floor: ${currentFloor + 1}`, { fontSize: '20px', fill: '#ffffff' }).setScrollFactor(0);
 
-        selectorGraphics.clear();
-        selectorGraphics.fillStyle(0x00ff00, 0.25);
-        selectorGraphics.fillRect(x, y, width, height);
+    // --- Floor Buttons ---
+    const floorUp = scene.add.text(120, 70, '▲', { fontSize: '20px', fill: '#00ff00', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4);
+    const floorDown = scene.add.text(150, 70, '▼', { fontSize: '20px', fill: '#ff0000', backgroundColor: '#333' }).setScrollFactor(0).setInteractive().setPadding(4);
+
+    floorUp.on('pointerdown', () => { if (currentFloor < NUM_FLOORS - 1) { currentFloor++; scene.floorText.setText(`Floor: ${currentFloor + 1}`); drawFloor(); }});
+    floorDown.on('pointerdown', () => { if (currentFloor > 0) { currentFloor--; scene.floorText.setText(`Floor: ${currentFloor + 1}`); drawFloor(); }});
+
+    // --- Build Buttons ---
+    let yPos = 110;
+    createBuildButton(scene, yPos, 'Pan & View', null, '#00ff00');
+    createBuildButton(scene, yPos += 35, 'Build Room', 'standard_room', '#ffffff');
+    createBuildButton(scene, yPos += 35, 'Place Door', 'place_door', '#ffffff');
+    createBuildButton(scene, yPos += 35, 'Place Bed', 'place_bed', '#ffffff');
+}
+
+function createBuildButton(scene, y, text, mode, color) {
+    const button = scene.add.text(10, y, text, { fontSize: '18px', fill: color, backgroundColor: '#555555', padding: { x: 5, y: 5 } })
+        .setScrollFactor(0).setInteractive();
+    button.on('pointerdown', () => {
+        buildMode = mode;
+        updateBuildStatusText();
+        // Update cursor preview image
+        if (buildMode && buildMode.startsWith('place_')) {
+            cursorPreview.setTexture(buildMode.split('_')[1] + '_img');
+        }
+    });
+}
+
+function zoneRoom(start, end) {
+    const startX = Math.min(start.x, end.x);
+    const startY = Math.min(start.y, end.y);
+    const endX = Math.max(start.x, end.x);
+    const endY = Math.max(start.y, end.y);
+    
+    const roomCost = (endX - startX + 1) * (endY - startY + 1) * ROOM_COST_PER_TILE;
+    if (money < roomCost) return;
+
+    money -= roomCost;
+    updateMoneyText();
+
+    for (let y = startY; y <= endY; y++) {
+        for (let x = startX; x <= endX; x++) {
+            // Only build on empty tiles
+            if (hotelData[currentFloor][y][x] === null) {
+                hotelData[currentFloor][y][x] = { type: 'standard_room', furniture: [] };
+            }
+        }
+    }
+    drawFloor();
+}
+
+function placeFurniture(tileX, tileY) {
+    const tile = hotelData[currentFloor][tileY]?.[tileX];
+    if (!tile) return; // Can't place furniture outside a room
+
+    const cost = (buildMode === 'place_door') ? DOOR_COST : BED_COST;
+    if (money < cost) return;
+
+    money -= cost;
+    updateMoneyText();
+
+    const furnitureType = buildMode.split('_')[1]; // 'door' or 'bed'
+    tile.furniture.push({ type: furnitureType, x: tileX, y: tileY });
+    
+    drawFloor();
+}
+
+function drawFloor() {
+    // This function now redraws both rooms and furniture for the current floor
+    roomGraphics.clear();
+    furnitureGroup.clear(true, true); // Remove all furniture sprites
+
+    for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
+        for (let x = 0; x < MAP_WIDTH_TILES; x++) {
+            const tile = hotelData[currentFloor][y][x];
+            if (tile) {
+                // Draw room tile
+                roomGraphics.fillStyle(0xff0000, 0.5); // Red for 'zoned'
+                roomGraphics.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                
+                // Draw furniture in the tile
+                tile.furniture.forEach(item => {
+                    const furnitureSprite = furnitureGroup.create(item.x * TILE_SIZE + TILE_SIZE/2, item.y * TILE_SIZE + TILE_SIZE/2, item.type + '_img');
+                });
+            }
+        }
     }
 }
 
@@ -151,18 +227,15 @@ function drawGrid(graphics) {
     for (let j = 0; j < MAP_HEIGHT_TILES + 1; j++) graphics.lineBetween(0, j * TILE_SIZE, MAP_WIDTH_TILES * TILE_SIZE, j * TILE_SIZE);
 }
 
-function drawRooms() {
-    roomGraphics.clear();
-    roomGraphics.fillStyle(0xff0000, 0.5); // Red color for standard rooms
-    for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
-        for (let x = 0; x < MAP_WIDTH_TILES; x++) {
-            if (hotelData[currentFloor][y][x] === 1) {
-                roomGraphics.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            }
-        }
-    }
+function drawSelectionBox(startX, startY, endX, endY) {
+    selectorGraphics.clear();
+    selectorGraphics.fillStyle(0x00ff00, 0.25);
+    const x = Math.min(startX, endX) * TILE_SIZE;
+    const y = Math.min(startY, endY) * TILE_SIZE;
+    const w = (Math.abs(startX - endX) + 1) * TILE_SIZE;
+    const h = (Math.abs(startY - endY) + 1) * TILE_SIZE;
+    selectorGraphics.fillRect(x, y, w, h);
 }
 
-function updateMoneyText() {
-    moneyText.setText(`Money: $${money}`);
-}
+function updateMoneyText() { moneyText.setText(`Money: $${money}`); }
+function updateBuildStatusText() { buildStatusText.setText(`Mode: ${buildMode || 'Pan & View'}`); }
