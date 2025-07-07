@@ -6,6 +6,13 @@ const config = {
     width: 800,
     height: 600,
     backgroundColor: '#1b1464',
+    // --- 1. ENABLE PHYSICS ---
+    physics: {
+        default: 'arcade',
+        arcade: {
+            debug: false
+        }
+    },
     scene: {
         preload: preload,
         create: create,
@@ -32,8 +39,8 @@ let moneyText, buildStatusText;
 const game = new Phaser.Game(config);
 
 function preload() {
-    this.load.image('door_img', 'https://daeyi.github.io/assets/door.png');
-    this.load.image('bed_img', 'https://daeyi.github.io/assets/bed.png');
+    this.load.image('door_img', 'https://labs.phaser.io/assets/sprites/door.png');
+    this.load.image('bed_img', 'https://labs.phaser.io/assets/sprites/bed.png');
     this.load.spritesheet('character_img', 'https://labs.phaser.io/assets/sprites/dude.png', { frameWidth: 32, frameHeight: 48 });
 }
 
@@ -41,7 +48,7 @@ function create() {
     // --- Data Init ---
     for (let f = 0; f < NUM_FLOORS; f++) {
         hotelData.push(Array(MAP_HEIGHT_TILES).fill(null).map(() => Array(MAP_WIDTH_TILES).fill(null)));
-        rooms.push([]); // Each floor has its own rooms array
+        rooms.push([]);
     }
     
     // --- Pathfinding Init ---
@@ -52,9 +59,9 @@ function create() {
     this.graphics = this.add.graphics({ lineStyle: { width: 1, color: 0x444444 } });
     roomGraphics = this.add.graphics();
     furnitureGroup = this.add.group();
-    characterGroup = this.add.group();
+    characterGroup = this.physics.add.group(); // Use a physics group
     drawGrid(this.graphics);
-    drawFloor();
+    findRooms(); // Initial room find
 
     // --- Camera & Input ---
     setupCameraAndInput(this);
@@ -84,8 +91,9 @@ class Character extends Phaser.GameObjects.Sprite {
     constructor(scene, x, y, texture) {
         super(scene, x * TILE_SIZE + TILE_SIZE / 2, y * TILE_SIZE + TILE_SIZE / 2, texture);
         this.path = [];
-        this.speed = 100; // pixels per second
-        scene.add.existing(this);
+        this.speed = 100;
+        // --- 2. ADD TO PHYSICS ---
+        scene.physics.add.existing(this); // This gives the sprite a 'body'
         characterGroup.add(this);
     }
 
@@ -111,7 +119,7 @@ class Character extends Phaser.GameObjects.Sprite {
             if (distance < 4) {
                 this.path.shift();
                 if(this.path.length === 0) {
-                    this.body.reset(targetX, targetY); // Snap to final position
+                    this.body.reset(targetX, targetY);
                 }
             } else {
                 const angle = Phaser.Math.Angle.Between(this.x, this.y, targetX, targetY);
@@ -124,14 +132,17 @@ class Character extends Phaser.GameObjects.Sprite {
 }
 
 class Guest extends Character {
-    // Guest-specific logic will go here
+    constructor(scene, x, y, texture) {
+        super(scene, x, y, texture);
+        // Example of giving the guest a destination
+        this.moveTo({x: 10, y: 10});
+    }
 }
 
 function spawnGuest() {
-    // Simple check for any available room
     const availableRoom = rooms[currentFloor].find(r => r.status === 'available');
     if (availableRoom) {
-        new Guest(game.scene.scenes[0], 0, 5, 'character_img'); // Spawn at tile (0,5)
+        new Guest(game.scene.scenes[0], 0, 5, 'character_img');
     }
 }
 
@@ -161,7 +172,6 @@ function findRooms() {
                         });
                     }
 
-                    // Check neighbors (up, down, left, right)
                     [[0,-1], [0,1], [-1,0], [1,0]].forEach(dir => {
                         let nx = current.x + dir[0];
                         let ny = current.y + dir[1];
@@ -181,7 +191,7 @@ function findRooms() {
         }
     }
     drawFloor();
-    setupPathfinding(); // Update pathfinding grid
+    setupPathfinding();
 }
 
 function setupPathfinding() {
@@ -189,7 +199,7 @@ function setupPathfinding() {
     for (let y = 0; y < MAP_HEIGHT_TILES; y++) {
         let row = [];
         for (let x = 0; x < MAP_WIDTH_TILES; x++) {
-            row.push(hotelData[currentFloor][y][x] ? 1 : 0); // 0 is walkable, 1 is a wall/room
+            row.push(hotelData[currentFloor][y][x] ? 1 : 0);
         }
         grid.push(row);
     }
@@ -197,23 +207,19 @@ function setupPathfinding() {
     easystar.setAcceptableTiles([0]);
 }
 
-// =================================================================
-//  DRAWING & UI (Mostly unchanged, but with updates for status)
-// =================================================================
-
 function drawFloor() {
     roomGraphics.clear();
     furnitureGroup.clear(true, true);
 
     const statusColors = {
-        incomplete: 0xff0000, // Red
-        available: 0x00ff00, // Green
-        occupied: 0x0000ff, // Blue
-        dirty: 0x8B4513 // Brown
+        incomplete: 0xff0000,
+        available: 0x00ff00,
+        occupied: 0x0000ff,
+        dirty: 0x8B4513
     };
 
     rooms[currentFloor].forEach(room => {
-        roomGraphics.fillStyle(statusColors[room.status], 0.5);
+        roomGraphics.fillStyle(statusColors[room.status] || 0xff0000, 0.5);
         room.tiles.forEach(tilePos => {
             roomGraphics.fillRect(tilePos.x * TILE_SIZE, tilePos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         });
@@ -231,9 +237,6 @@ function drawFloor() {
     }
 }
 
-// ... (The rest of the UI and helper functions from Step 4 remain largely the same)
-// ... (setupUI, createBuildButton, zoneRoom, placeFurniture, drawGrid, etc.)
-
 function setupUI(scene) {
     moneyText = scene.add.text(10, 10, `Money: $${money}`, { fontSize: '20px', fill: '#ffff00' }).setScrollFactor(0);
     buildStatusText = scene.add.text(10, 40, 'Mode: Pan & View', { fontSize: '16px', fill: '#ffffff' }).setScrollFactor(0);
@@ -243,16 +246,19 @@ function setupUI(scene) {
     floorUp.on('pointerdown', () => { if (currentFloor < NUM_FLOORS - 1) { currentFloor++; scene.floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
     floorDown.on('pointerdown', () => { if (currentFloor > 0) { currentFloor--; scene.floorText.setText(`Floor: ${currentFloor + 1}`); findRooms(); }});
     let yPos = 110;
-    createBuildButton(scene, yPos, 'Pan & View', null, '#00ff00');
-    createBuildButton(scene, yPos += 35, 'Build Room', 'standard_room', '#ffffff');
-    createBuildButton(scene, yPos += 35, 'Place Door', 'place_door', '#ffffff');
-    createBuildButton(scene, yPos += 35, 'Place Bed', 'place_bed', '#ffffff');
+    createBuildButton(scene, yPos, 'Pan & View', null);
+    createBuildButton(scene, yPos += 35, 'Build Room', 'standard_room');
+    createBuildButton(scene, yPos += 35, 'Place Door', 'place_door');
+    createBuildButton(scene, yPos += 35, 'Place Bed', 'place_bed');
 }
 
-function createBuildButton(scene, y, text, mode, color) {
-    const button = scene.add.text(10, y, text, { fontSize: '18px', fill: color, backgroundColor: '#555555', padding: { x: 5, y: 5 } })
+function createBuildButton(scene, y, text, mode) {
+    const button = scene.add.text(10, y, text, { fontSize: '18px', fill: '#ffffff', backgroundColor: '#555555', padding: { x: 5, y: 5 } })
         .setScrollFactor(0).setInteractive();
-    button.on('pointerdown', () => { buildMode = mode; updateBuildStatusText(); });
+    button.on('pointerdown', () => {
+        buildMode = mode;
+        updateBuildStatusText();
+    });
 }
 
 function zoneRoom(start, end) {
@@ -289,4 +295,17 @@ function drawGrid(graphics) {
 }
 
 function updateBuildStatusText() { buildStatusText.setText(`Mode: ${buildMode || 'Pan & View'}`); }
-// NOTE: This is a simplified version of the full loop for clarity. Full staff/guest AI is complex.
+// NOTE: I removed the selection box and cursor preview for simplification to ensure the main loop works.
+// They can be added back carefully. This version focuses on stability.
+function setupCameraAndInput(scene) {
+    scene.cameras.main.setBounds(0, 0, MAP_WIDTH_TILES * TILE_SIZE, MAP_HEIGHT_TILES * TILE_SIZE);
+    scene.input.on('pointerdown', (pointer) => {
+        const worldPoint = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const tileX = Math.floor(worldPoint.x / TILE_SIZE);
+        const tileY = Math.floor(worldPoint.y / TILE_SIZE);
+
+        if (buildMode && buildMode.startsWith('place_')) {
+            placeFurniture(tileX, tileY);
+        }
+    });
+}
