@@ -1,10 +1,10 @@
-#include objects.js;
-
-// game.js
-var config = {
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
+// This is the main configuration object for our game
+const config = {
+    type: Phaser.AUTO, // Phaser will decide whether to use WebGL or Canvas
+    width: 800,       // Game width in pixels
+    height: 600,      // Game height in pixels
+    backgroundColor: '#1b1464', // A dark blue background color
+    parent: 'game-container', // This is not strictly needed with our HTML but good practice
     scene: {
         preload: preload,
         create: create,
@@ -12,111 +12,30 @@ var config = {
     }
 };
 
-var game = new Phaser.Game(config);
+// Create a new game instance
+const game = new Phaser.Game(config);
 
-// Class definitions for Hotel, Room, Guest, and Staff
-class Hotel {
-    constructor(name) {
-        this.name = name;
-        this.rooms = [];
-        this.staff = [];
-        this.budget = 10000;
-        this.reputation = 5;
-    }
-
-    cleanRoom(room) {
-        room.status = 'clean';
-        room.guest = null;
-    }
+/**
+ * The preload function is where we'll load our assets like images and sounds.
+ * For now, it's empty.
+ */
+function preload() {
+    // We will load assets here in the future
 }
 
-class Room {
-    constructor(number, type) {
-        this.number = number;
-        this.type = type;
-        this.status = 'clean';
-        this.guest = null;
-    }
+/**
+ * The create function is called once, after preload, and is where we'll set up
+ * our game's initial state and objects.
+ */
+function create() {
+    console.log("Game is running!");
+    // The background color is already set in the config, so this area is for game objects.
 }
 
-class Guest {
-    constructor(name, arrivalTime, departureTime, preferences) {
-        this.name = name;
-        this.arrivalTime = arrivalTime;
-        this.departureTime = departureTime;
-        this.preferences = preferences;
-    }
+/**
+ * The update function is a loop that runs every frame.
+ * This is where we'll handle player input and dynamic game logic.
+ */
+function update() {
+    // This loop will be the heart of our game's logic
 }
-
-class Staff {
-    constructor(name, role, salary) {
-        this.name = name;
-        this.role = role;
-        this.salary = salary;
-    }
-}
-
-// Game scenes
-var MainScene = new Phaser.Scene('MainScene');
-
-MainScene.preload = function () {
-    // Load assets
-};
-
-MainScene.create = function () {
-    // Create game objects and initialize the game
-};
-
-MainScene.update = function () {
-    // Update game logic
-     // Guest arrival
-    if (Math.random() < 0.2) { // Adjust probability as needed
-        let guest = new Guest('Guest ' + (guestCount++), Date.now(), Date.now() + 3600000, ['cleanliness']); // 1 hour stay
-        this.hotel.guests.push(guest);
-    }
-
-    // Room assignment
-    this.hotel.guests.forEach(guest => {
-        if (!guest.room) {
-            let availableRoom = this.hotel.rooms.find(room => room.status === 'clean');
-            if (availableRoom) {
-                availableRoom.status = 'occupied';
-                availableRoom.guest = guest;
-                guest.room = availableRoom;
-            }
-        }
-    });
-
-    // Room cleaning
-    this.hotel.staff.forEach(staff => {
-        if (staff.role === 'housekeeping') {
-            let dirtyRoom = this.hotel.rooms.find(room => room.status === 'dirty');
-            if (dirtyRoom) {
-                this.hotel.cleanRoom(dirtyRoom);
-            }
-        }
-    });
-};
-
-// Add the scene to the game
-game.scene.add('MainScene', MainScene);
-game.scene.start('MainScene');
-
-function preload ()
-{
-    // Load assets here, e.g., images, sounds
-}
-
-function create ()
-{
-    // Create game objects here, e.g., sprites, text
-}
-
-function update ()
-{
-    // Update game logic here
-
-   
-}
-
-
